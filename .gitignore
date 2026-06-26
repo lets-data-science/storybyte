@@ -1,0 +1,11 @@
+# large data + checkpoints (regenerate via the pipeline; artifacts are shipped separately)
+data/*.txt
+data/*.bin
+data/vocab.json
+data/merges.txt
+
+__pycache__/
+*.pyc
+.DS_Store
+data_pipeline.log
+train.log

@@ -1,0 +1,6 @@
+{
+  "numpy_vs_torch_max_logit_diff": 1.71661376953125e-05,
+  "greedy_agreement": 1.0,
+  "dtype": "float32",
+  "pass": true
+}

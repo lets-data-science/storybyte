@@ -1,0 +1,9 @@
+{
+  "vocab_size": 2048,
+  "eot_id": 0,
+  "train_tokens": 113524462,
+  "val_tokens": 6086687,
+  "train_stories": 147464,
+  "val_stories": 7948,
+  "dtype": "uint16"
+}
