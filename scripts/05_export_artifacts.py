@@ -1,5 +1,5 @@
 """
-05 — Export the trained checkpoint into the course artifact contract (PART B) and
+05: Export the trained checkpoint into the course artifact contract and
 VERIFY that the pure-NumPy reference_forward reproduces the PyTorch model.
 
 Produces course_artifacts/:
@@ -66,7 +66,7 @@ def main():
     }
     json.dump(config, open(os.path.join(ART, "storybyte_config.json"), "w"), indent=2)
 
-    # weights — float32 so the browser reproduces the trained model EXACTLY.
+    # Use float32 so the browser reproduces the trained model exactly.
     # (float16 halves the file to ~2.2 MB but flips ~5% of greedy tokens; the 4.3 MB
     #  float32 file is a fine download and keeps the in-browser model bit-faithful.)
     W32 = export_weights(model, np.float32)

@@ -1,53 +1,53 @@
-# StoryByte — Course Artifact Manifest
+# StoryByte Course Artifact Manifest
 
-The files in this folder are what the interactive course **"Build a Tiny LLM — From Tokens to Text"** loads and runs in the browser. The course's pure-NumPy forward pass (run in Pyodide/WASM) mirrors `reference_forward.py` and reproduces this exact model.
+These files are loaded by the interactive course
+["Build a Tiny LLM: From Tokens to Text"](https://letsdatascience.com/learn/build-a-tiny-llm).
+The browser implementation mirrors `reference_forward.py` and reproduces the exported
+model.
 
-## Canonical numbers (cite these in the course)
+## Canonical numbers
 
-| | |
+| Item | Value |
 |---|---|
-| **Parameters** | **1,088,256** (~1.09M) |
-| Architecture | GPT-2-style decoder · 4 layers · 4 heads · d_model 128 · context 256 |
-| Vocab | 2,048 (byte-level BPE) |
-| Trained on | TinyStories V2 (GPT-4), **113,524,462 tokens** (147,464 stories) |
-| Recipe | AdamW(0.9,0.95), wd 0.1, lr 6e-4→6e-5, 1k warmup + cosine, grad-clip 1.0, batch 64, 30k steps |
-| **Final train loss** | **1.7206** |
-| **Final val loss** | **1.7398**  (best 1.7318) |
-| **Val perplexity** | **5.70**  (≈ effectively choosing among ~6 tokens/step; random would be 2,048) |
-| Training time | ~42 min on Apple MPS |
-| **Verification** | NumPy(float32) vs PyTorch: max logit diff **1.7e-05**, greedy agreement **100.0%** ✅ |
-| Weights dtype | float32 (4.37 MB) — chosen so the browser reproduces the model exactly |
+| Parameters | 1,088,256 |
+| Architecture | GPT-2-style decoder, 4 layers, 4 heads, d_model 128, context 256 |
+| Vocab | 2,048 byte-level BPE tokens |
+| Training data | TinyStories V2, 113,524,462 tokens, 147,464 stories |
+| Recipe | AdamW, beta=(0.9, 0.95), wd 0.1, lr 6e-4 to 6e-5, 1k warmup, cosine decay, grad clip 1.0, batch 64, 30k steps |
+| Final train loss | 1.7206 |
+| Final val loss | 1.7398, best 1.7318 |
+| Val perplexity | 5.70 |
+| Training time | about 42 minutes on Apple MPS |
+| Verification | NumPy float32 vs PyTorch max logit diff 1.7e-05, greedy agreement 100.0% |
+| Weights dtype | float32, 4.37 MB |
 
 ## Files
 
-| File | Schema / contents |
+| File | Contents |
 |---|---|
-| `storybyte_config.json` | architecture + final metrics (see keys above) |
-| `storybyte_weights.npz` | 52 named float32 arrays (GPT-2 naming; see convention below) |
-| `reference_forward.py` | the verified pure-NumPy forward pass + `generate()` — mirror this in-browser |
-| `storybyte_tokenizer.json` | byte-level BPE: `vocab` (token→id) + `merges` (ordered) + `special_tokens` |
-| `storybyte_tokenizer_hf.json` | the Hugging Face `tokenizers` JSON — the authoritative exact encoder |
-| `train_traces.json` | `steps`, `train_loss`, `val_loss`, `lr`, `perplexity` (for Module 6 curves) |
-| `interp_data.json` | logit-lens (`per_layer_top5`) + attention `patterns` per layer/head (Module 7) |
-| `sample_generations.json` | reference outputs per prompt × decoding (greedy is exactly reproducible) |
-| `verification.json` | the NumPy-vs-PyTorch proof |
+| `storybyte_config.json` | architecture and final metrics |
+| `storybyte_weights.npz` | 52 named float32 arrays using GPT-2-style names |
+| `reference_forward.py` | verified pure-NumPy forward pass and `generate()` |
+| `storybyte_tokenizer.json` | simplified byte-level BPE view: vocab, merges, special tokens |
+| `storybyte_tokenizer_hf.json` | authoritative Hugging Face tokenizer JSON |
+| `train_traces.json` | steps, train loss, val loss, LR, and perplexity |
+| `interp_data.json` | logit-lens top tokens and attention patterns per layer/head |
+| `sample_generations.json` | reference outputs for fixed prompts and decoding settings |
+| `verification.json` | NumPy/PyTorch parity proof |
 
-## Weight naming + matmul convention (IMPORTANT for the browser port)
+## Weight naming and matmul convention
 
-- All **linear** weights are stored **transposed to `(in, out)`**, so a layer is simply `y = x @ W + b`.
-- Arrays: `wte` (vocab, d) · `wpe` (block, d) · per block `i`:
-  `h.{i}.ln_1.g/.b` (d,) · `h.{i}.attn.c_attn.w` (d, 3d) `.b` (3d,) · `h.{i}.attn.c_proj.w` (d, d) `.b` ·
-  `h.{i}.ln_2.g/.b` · `h.{i}.mlp.c_fc.w` (d, 4d) `.b` · `h.{i}.mlp.c_proj.w` (4d, d) `.b` · then `ln_f.g/.b`.
-- `c_attn` output splits into **q, k, v in that order** along the last axis.
-- **LayerNorm:** population variance (ddof=0), eps **1e-5**, with weight `g` and bias `b`.
-- **GELU:** tanh approximation `0.5·x·(1+tanh(√(2/π)(x+0.044715x³)))`.
-- **LM head is weight-tied:** `logits = x @ wte.T` (no separate output matrix).
-- Compute in float32 (the stored dtype). The forward pass is deterministic; **greedy decoding reproduces exactly**, sampled decoding is illustrative (RNG differs across engines).
+- Linear weights are stored transposed to `(in, out)`, so a layer is `y = x @ W + b`.
+- Arrays include `wte`, `wpe`, per-block LayerNorm, attention, MLP, and final LayerNorm tensors.
+- `c_attn` output splits into `q`, `k`, and `v` in that order along the last axis.
+- LayerNorm uses population variance, `eps=1e-5`, weight `g`, and bias `b`.
+- GELU uses the tanh approximation:
+  `0.5*x*(1+tanh(sqrt(2/pi)*(x+0.044715*x^3)))`.
+- The language-model head is tied to the token embedding: `logits = x @ wte.T`.
+- The forward pass is deterministic in float32. Greedy decoding reproduces exactly; sampled decoding is illustrative because RNGs differ across engines.
 
-## Sample stories (greedy, from the shipped model)
+## Honesty note
 
-- **"Once upon a time"** → *"…there was a little girl named Lily. She loved to play with her toys and have fun. One day, she found a big box of toys in her room… Lily's mom saw her and said, 'Lily, you need to clean your room.'…"*
-- **"One day, a little girl named Lily"** → *"…went to the park with her mom. They saw a big tree with a lot of fruit. Lily wanted to eat the fruit, but her mom said, 'No, Lily, we can't eat the fruit.'…"*
-
-## Honesty note (carry into the course)
-StoryByte writes simple children's stories and nothing else — no world knowledge, no math, not an assistant. That's the point: it's the smallest model that still speaks fluent English.
+StoryByte writes short children's stories and nothing else. It has no general world
+knowledge, does not do math, and is not a chatbot. The narrow task is deliberate: it
+makes the model small enough for a learner to inspect end to end.

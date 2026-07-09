@@ -1,5 +1,5 @@
 """
-04 — Train StoryByte (the nanoGPT-canonical training loop).
+04: Train StoryByte with a nanoGPT-style training loop.
 
 Objective: self-supervised next-token prediction, cross-entropy loss.
 Optimizer: AdamW (betas 0.9/0.95, weight_decay 0.1), grad-clip 1.0,

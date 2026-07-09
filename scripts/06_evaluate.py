@@ -1,5 +1,5 @@
 """
-06 — Evaluate StoryByte and produce the course's display artifacts:
+06: Evaluate StoryByte and produce the course display artifacts:
   course_artifacts/sample_generations.json  (fixed prompts x decoding settings)
   course_artifacts/interp_data.json         (logit-lens + attention patterns for Module 7)
 
@@ -32,7 +32,7 @@ def instrumented_forward(m, ids):
         attn_patterns.append(att)
         y = (att @ v).transpose(1, 0, 2).reshape(T, m.n_embd)
         x = x + (y @ m.W[f"h.{i}.attn.c_proj.w"] + m.W[f"h.{i}.attn.c_proj.b"])
-        hmid = np.maximum  # placeholder to keep linter calm
+        hmid = np.maximum  # Keeps the local namespace stable for inspection.
         from reference_forward import gelu
         hh = gelu(layernorm(x, m.W[f"h.{i}.ln_2.g"], m.W[f"h.{i}.ln_2.b"]) @ m.W[f"h.{i}.mlp.c_fc.w"] + m.W[f"h.{i}.mlp.c_fc.b"])
         x = x + (hh @ m.W[f"h.{i}.mlp.c_proj.w"] + m.W[f"h.{i}.mlp.c_proj.b"])

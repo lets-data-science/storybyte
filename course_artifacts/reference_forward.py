@@ -1,5 +1,5 @@
 """
-reference_forward.py — StoryByte's forward pass + generation in PURE NUMPY.
+reference_forward.py: StoryByte forward pass and generation in pure NumPy.
 
 This is the canonical, dependency-light (numpy-only for the math) re-implementation that
 the in-browser course mirrors line-for-line. It loads the exported weights and reproduces

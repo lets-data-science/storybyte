@@ -1,5 +1,5 @@
 """
-StoryByte — a tiny GPT-2-style decoder-only language model.
+StoryByte: a tiny GPT-2-style decoder-only language model.
 
 Deliberately classic (nanoGPT/minGPT lineage) so a from-scratch NumPy forward pass
 maps to it 1:1: learned absolute positions, pre-LN, standard multi-head attention,

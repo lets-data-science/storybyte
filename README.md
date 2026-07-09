@@ -1,100 +1,126 @@
-# StoryByte 📖🤖 — a tiny LLM you can actually understand
+# StoryByte
 
-**StoryByte is a ~1-million-parameter GPT, trained from scratch on [TinyStories](https://arxiv.org/abs/2305.07759), that writes original little children's stories.** It's small enough that its *entire* forward pass runs in ~40 lines of NumPy in a web browser — yet it produces real, grammatical English.
+StoryByte is a small GPT-style language model trained from scratch on
+[TinyStories](https://arxiv.org/abs/2305.07759). It has about 1.09 million
+parameters and writes short children's stories.
 
-It's the model behind the interactive course **"Build a Tiny LLM — From Tokens to Text"**, where beginners build every piece of it from scratch (tokenizer → embeddings → attention → transformer block → sampler) and watch *this* model generate a story. This repo is the **offline half**: everything used to train StoryByte and produce the course's model files, fully reproducible.
+This repo is the offline build system for the Let's Data Science course
+["Build a Tiny LLM: From Tokens to Text"](https://letsdatascience.com/learn/build-a-tiny-llm).
+The browser course rebuilds the forward pass in NumPy and runs the trained model
+live. This repository contains the training code, export scripts, and the artifact
+contract the course loads.
 
-> **Honesty first:** StoryByte writes simple toddler-vocabulary stories and *nothing else*. It has no world knowledge, can't do math, and isn't a chatbot. That narrowness is the whole point — it's the smallest thing that still speaks fluent English, which makes it perfect for learning how an LLM actually works.
+StoryByte is intentionally narrow. It does not answer general questions, do math,
+or behave like a chatbot. That is the point: a tiny model can produce readable
+language when the world is restricted enough, and that makes every part of the LLM
+stack easier to inspect.
 
----
+## Repository layout
 
-## What's in here
-
-```
+```text
 storybyte/
-├── model/storybyte.py          # the GPT (PyTorch) — classic GPT-2/nanoGPT block
-├── scripts/
-│   ├── 01_download_data.py      # get TinyStories (V2, GPT-4)
-│   ├── 02_train_tokenizer.py    # byte-level BPE (vocab 2048)
-│   ├── 03_prepare_data.py       # tokenize + pack to uint16 streams
-│   ├── 04_train.py              # the training loop (AdamW, warmup+cosine, grad-clip)
-│   ├── 05_export_artifacts.py   # export + VERIFY the NumPy reference matches PyTorch
-│   ├── reference_forward.py     # StoryByte's forward pass + generation in PURE NUMPY
-│   └── 06_evaluate.py           # sample stories + interpretability data
-├── course_artifacts/           # the files the in-browser course loads (see below)
-├── checkpoints/                # trained weights (or a GitHub Release)
-├── BUILD_LOG.md                # exhaustive lab notebook of the whole run
-├── HARDWARE.md                 # what you need to train it (GPU / Mac / Colab / CPU)
-└── REPRODUCIBILITY.md          # seeds, versions, expected numbers
+  model/storybyte.py            PyTorch GPT model
+  scripts/
+    01_download_data.py         Download TinyStories
+    02_train_tokenizer.py       Train byte-level BPE tokenizer
+    03_prepare_data.py          Tokenize and pack uint16 streams
+    04_train.py                 Train with AdamW and cosine LR
+    05_export_artifacts.py      Export and verify course artifacts
+    06_evaluate.py              Generate samples and interpretability data
+    reference_forward.py        Pure NumPy forward pass and generation
+  course_artifacts/             Files consumed by the browser course
+  checkpoints/                  Trained checkpoint and training traces
+  BUILD_LOG.md                  Build notes and canonical measurements
+  HARDWARE.md                   Training hardware notes
+  REPRODUCIBILITY.md            Seeds, versions, and expected results
 ```
 
-## Quickstart — reproduce StoryByte yourself
+## Quickstart
 
 ```bash
 pip install -r requirements.txt
-make all          # download → tokenizer → data → train → export → evaluate
-# or step by step:
-python scripts/01_download_data.py            # full data (use --subset_mb 400 for a fast run)
+make all
+```
+
+Step by step:
+
+```bash
+python scripts/01_download_data.py --subset_mb 400
 python scripts/02_train_tokenizer.py
 python scripts/03_prepare_data.py
-python scripts/04_train.py                    # trains on Apple MPS / CUDA / CPU
-python scripts/05_export_artifacts.py         # writes course_artifacts/ + verifies the NumPy port
+python scripts/04_train.py
+python scripts/05_export_artifacts.py
 python scripts/06_evaluate.py
 ```
 
-Run StoryByte with **zero deep-learning frameworks** (pure NumPy):
+Run the exported model with NumPy only:
 
 ```bash
 python scripts/reference_forward.py "Once upon a time"
 ```
 
-## The model (deliberately classic)
+## Model
 
-StoryByte is the textbook GPT-2 / [nanoGPT](https://github.com/karpathy/nanoGPT) decoder block — *no* modern variants — because the course rebuilds exactly this design from scratch:
+StoryByte uses the classic GPT-2/nanoGPT decoder block because the course rebuilds
+that architecture directly:
 
-- decoder-only, causal (masked) self-attention
-- learned absolute positional embeddings (added to token embeddings)
-- **pre-LayerNorm** blocks: `x = x + attn(LN(x)); x = x + mlp(LN(x))`
+- decoder-only causal self-attention
+- learned absolute positional embeddings
+- pre-LayerNorm transformer blocks
 - standard multi-head scaled-dot-product attention
-- MLP = Linear → **GELU** → Linear (4× width)
-- weight-tied LM head; classic LayerNorm (weight + bias)
+- GELU MLP with 4x hidden width
+- weight-tied language-model head
 
 | Config | Value |
 |---|---|
-| Layers / Heads / d_model | 4 / 4 / 128 |
+| Layers / heads / d_model | 4 / 4 / 128 |
 | Context | 256 tokens |
-| Vocab (byte-level BPE) | 2,048 |
-| Parameters | ~1.1M |
-| Trained on | TinyStories V2 (GPT-4), 113.5M tokens |
-| Recipe | AdamW (0.9, 0.95), wd 0.1, lr 6e-4→6e-5, 1k warmup + cosine, grad-clip 1.0 |
+| Vocab | 2,048 byte-level BPE tokens |
+| Parameters | 1,088,256 |
+| Training data | TinyStories V2, 113.5M tokens in the reference run |
+| Recipe | AdamW, beta=(0.9, 0.95), wd 0.1, lr 6e-4 to 6e-5, 1k warmup, cosine decay, grad clip 1.0 |
 
 ## Results
 
-- **1,088,256 parameters.** Trained 30,000 steps in **~42 min on Apple MPS**.
-- **Final val loss 1.74 · perplexity 5.70** (random would be 2,048).
-- The pure-NumPy `reference_forward.py` reproduces the PyTorch model **exactly**:
-  max logit diff **1.7e-05**, greedy-token agreement **100.0%** (`course_artifacts/verification.json`).
-- Sample (greedy) from **"Once upon a time"**:
-  > *…there was a little girl named Lily. She loved to play with her toys and have fun. One day, she found a big box of toys in her room… Lily's mom saw her and said, "Lily, you need to clean your room."…*
+The reference run trained for 30,000 steps in about 42 minutes on Apple MPS.
 
-(Full curves in `course_artifacts/train_traces.json`; more samples in `sample_generations.json`; the whole story in `BUILD_LOG.md`.)
+| Metric | Value |
+|---|---:|
+| Final train loss | 1.7206 |
+| Final val loss | 1.7398 |
+| Val perplexity | 5.70 |
+| NumPy vs PyTorch max logit diff | 1.7e-05 |
+| Greedy-token agreement | 100.0% |
 
-## `course_artifacts/` — the contract the course consumes
+The shipped NumPy reference in `scripts/reference_forward.py` reproduces the PyTorch
+checkpoint within float32 tolerance. See `course_artifacts/verification.json` for the
+exact verification record.
 
-| File | What |
+## Course artifacts
+
+The browser course loads files from `course_artifacts/`.
+
+| File | Purpose |
 |---|---|
-| `storybyte_config.json` | architecture + final metrics |
-| `storybyte_weights.npz` | all weights as named arrays (float16), GPT-2 naming |
-| `reference_forward.py` | the verified pure-NumPy forward pass + generation |
-| `storybyte_tokenizer.json` | byte-level BPE vocab + merges (+ HF tokenizer for exact encode) |
-| `train_traces.json` | loss / LR / perplexity curves (for the "How It Learned" module) |
-| `interp_data.json` | logit-lens + attention patterns (for the "Opening the Box" module) |
-| `sample_generations.json` | reference outputs at several temperatures |
-| `verification.json` | proof the NumPy port == the trained model |
-| `MANIFEST.md` | every file, shape, the matmul convention, canonical numbers |
+| `storybyte_config.json` | architecture and final metrics |
+| `storybyte_weights.npz` | all model weights as named float32 arrays |
+| `reference_forward.py` | verified pure-NumPy forward pass |
+| `storybyte_tokenizer.json` | simplified byte-level BPE view |
+| `storybyte_tokenizer_hf.json` | authoritative Hugging Face tokenizer JSON |
+| `train_traces.json` | loss, LR, and perplexity curves |
+| `interp_data.json` | logit-lens and attention-pattern data |
+| `sample_generations.json` | recorded generation examples |
+| `verification.json` | NumPy/PyTorch parity proof |
+| `MANIFEST.md` | artifact schema and canonical numbers |
 
-## Credits & sources
+## Sources
 
-StoryByte stands on: **TinyStories** (Eldan & Li, 2023, [arXiv:2305.07759](https://arxiv.org/abs/2305.07759)) · **nanoGPT** (Karpathy, [github.com/karpathy/nanoGPT](https://github.com/karpathy/nanoGPT)) · **GPT-2** (Radford et al., 2019) · **Attention Is All You Need** (Vaswani et al., 2017, [arXiv:1706.03762](https://arxiv.org/abs/1706.03762)) · **AdamW** ([arXiv:1711.05101](https://arxiv.org/abs/1711.05101)) · **BPE** (Sennrich et al., 2016, [arXiv:1508.07909](https://arxiv.org/abs/1508.07909)) · **picoGPT** (Jay Mody) for the pure-NumPy inference style.
+- TinyStories: Eldan and Li, 2023, [arXiv:2305.07759](https://arxiv.org/abs/2305.07759)
+- nanoGPT: Andrej Karpathy, [github.com/karpathy/nanoGPT](https://github.com/karpathy/nanoGPT)
+- GPT-2: Radford et al., 2019
+- Attention Is All You Need: Vaswani et al., 2017, [arXiv:1706.03762](https://arxiv.org/abs/1706.03762)
+- AdamW: Loshchilov and Hutter, 2017, [arXiv:1711.05101](https://arxiv.org/abs/1711.05101)
+- BPE: Sennrich et al., 2016, [arXiv:1508.07909](https://arxiv.org/abs/1508.07909)
+- picoGPT: Jay Mody, pure-NumPy GPT reference style
 
 MIT licensed. Built by [Let's Data Science](https://letsdatascience.com).

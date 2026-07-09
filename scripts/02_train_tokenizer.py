@@ -1,5 +1,5 @@
 """
-02 — Train a byte-level BPE tokenizer on TinyStories.
+02: Train a byte-level BPE tokenizer on TinyStories.
 
 Byte-level BPE = the GPT-2 tokenization scheme (Radford et al. 2019): start from the
 256 possible bytes, then repeatedly merge the most frequent adjacent pair. The trained

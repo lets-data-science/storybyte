@@ -1,5 +1,5 @@
 """
-01 — Download the TinyStories (V2, GPT-4) dataset.
+01: Download the TinyStories V2 dataset.
 
 TinyStories: Eldan & Li, Microsoft Research, 2023 (arXiv:2305.07759).
 Dataset: https://huggingface.co/datasets/roneneldan/TinyStories

@@ -1,5 +1,5 @@
 """
-03 — Tokenize TinyStories and pack into flat uint16 token streams for training.
+03: Tokenize TinyStories and pack flat uint16 token streams for training.
 
 Each story is encoded with the trained BPE and joined by the <|endoftext|> token, then
 the whole stream is written as a memory-mappable uint16 array (nanoGPT convention).

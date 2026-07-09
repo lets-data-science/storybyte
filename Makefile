@@ -1,4 +1,4 @@
-# StoryByte — reproduce the whole model end to end.
+# StoryByte: reproduce the whole model end to end.
 PY=python3
 all: data train export evaluate
 data: download tokenizer prepare
