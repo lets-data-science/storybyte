@@ -1,51 +1,62 @@
 # Hardware guide
 
-StoryByte is about 1.1M parameters. It is small enough that you do not need a
-cluster, an A100, or paid cloud compute.
+StoryByte has 1,088,256 parameters. The training script selects devices in this
+order: CUDA, Apple MPS, CPU.
 
-## Reference run
+## Measured reference path
 
-- Apple Silicon Mac with PyTorch MPS.
-- About 12 training steps/sec at batch 64 and context 256.
-- Full 30,000-step run took about 42 minutes.
-- Any 16 GB Apple Silicon Mac has enough memory for the model and the 419 MB data subset.
+The checked-in run used Apple MPS on the machine recorded in `BUILD_LOG.md`:
 
-## NVIDIA GPU
+- batch: 64 sequences x 256 tokens
+- updates: 30,000
+- observed speed: about 12 updates per second
+- wall time: 42.4 minutes
+- data: the 400 MiB training subset plus the full validation file
 
-- A modern consumer card such as an RTX 3060 or RTX 4070 trains this comfortably.
-- PyTorch selects CUDA automatically when available.
-- The full reference-sized run should finish in well under an hour.
+These timings describe that machine and software build. They are not promises
+for another Mac.
 
-## Google Colab
+## CUDA
 
-A free T4 runtime is enough for this model. Install requirements, download the fast
-subset with `--subset_mb 400`, then run the pipeline.
+`scripts/04_train.py` uses CUDA when `torch.cuda.is_available()` is true. The
+model and batch are small by current GPU standards. This repository does not
+publish a measured CUDA runtime or memory peak, so treat any local estimate as
+machine-specific and record it if you add one.
 
-## CPU only
+## CPU
 
-CPU training works, but it is much slower. For a quick local test:
+CPU training is supported and is the fallback when neither CUDA nor MPS is
+available. Start with a shorter run to test the pipeline:
 
 ```bash
 python scripts/04_train.py --max_iters 5000 --batch_size 32
 ```
 
-That produces rough output. Train longer for cleaner stories.
+That command is a pipeline check, not a reproduction of the shipped model.
+Quality and runtime will differ from the 30,000-update reference run.
 
-## Data and disk
+## Hosted notebooks
 
-- Full TinyStories V2 train file: about 2.2 GB.
-- Fast subset: about 419 MB.
-- Tokenized `.bin` streams: a few hundred MB.
-- Budget about 3 GB free disk for a full local run.
+A notebook runtime can use the same commands. Install `requirements.txt`, keep
+the repository and generated files on persistent storage, and confirm the
+printed device before training. Hosted hardware, session duration, and pricing
+change over time, so this repository does not attach a fixed runtime or cost to
+those services.
 
-## Cost
+## Disk use
 
-Local Mac/PC training is free once you have the machine. Colab free tier also works.
-A short rented GPU run should cost well under a dollar for this model.
+- reference training download: first 400 MiB, about 419 MB in decimal units
+- complete TinyStories V2 training file: about 2.2 GB
+- checked-in token streams: about 229 MB training and 12 MB validation
+- exported float32 weights: 4,353,024 parameter bytes, about 4.2 MiB before NPZ overhead
 
-## Tuning
+Allow extra room for the source text, token streams, checkpoint, and temporary
+files. `make clean` removes generated `.bin` files and `.pt` checkpoints; it does
+not remove downloaded text or course artifacts.
 
-- Smaller machine: reduce `--batch_size` to 32 or 16.
-- Shorter test run: reduce `--max_iters`.
-- Browser target: keep `--n_layer` at 4 or lower, because browser generation speed
-  is driven mostly by layer count.
+## Browser inference
+
+Browser generation uses a separate NumPy implementation. In the recorded
+feasibility tests, layer count was the dominant latency factor among the tested
+small configurations. That observation motivated four layers. It is not a
+general claim that width has zero performance cost.

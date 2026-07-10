@@ -1,5 +1,5 @@
 """
-04: Train StoryByte with a nanoGPT-style training loop.
+04 - Train StoryByte with the recorded small-GPT recipe.
 
 Objective: self-supervised next-token prediction, cross-entropy loss.
 Optimizer: AdamW (betas 0.9/0.95, weight_decay 0.1), grad-clip 1.0,
@@ -9,7 +9,7 @@ Logs full training traces (step, train_loss, val_loss, lr, perplexity) to
 checkpoints/train_traces.json for the course's "How It Learned" module, periodically
 samples a story so we can watch coherence emerge, and checkpoints the best val loss.
 
-Runs on Apple MPS if available, else CPU.
+Runs on CUDA when available, then Apple MPS, then CPU.
 """
 import argparse, json, math, os, time
 import numpy as np
@@ -59,7 +59,12 @@ if __name__ == "__main__":
 
     os.makedirs(CKPT, exist_ok=True)
     torch.manual_seed(a.seed); np.random.seed(a.seed)
-    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     print(f"device: {device}")
 
     meta = json.load(open(os.path.join(DATA, "meta.json")))

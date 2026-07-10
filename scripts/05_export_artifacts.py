@@ -1,5 +1,5 @@
 """
-05: Export the trained checkpoint into the course artifact contract and
+05 - Export the trained checkpoint into the course artifact contract and
 VERIFY that the pure-NumPy reference_forward reproduces the PyTorch model.
 
 Produces course_artifacts/:
@@ -49,6 +49,9 @@ def main():
     traces = json.load(open(os.path.join(CKPT, "train_traces.json")))
     final_train = traces["train_loss"][-1]; final_val = traces["val_loss"][-1]
     val_ppl = math.exp(min(final_val, 20))
+    checkpoint_step = int(ck["iter"])
+    checkpoint_val = float(ck["val_loss"])
+    checkpoint_ppl = math.exp(min(checkpoint_val, 20))
     meta = ck.get("meta", {})
 
     # config
@@ -57,8 +60,12 @@ def main():
         "n_embd": cfg.n_embd, "vocab_size": cfg.vocab_size, "block_size": cfg.block_size,
         "mlp_ratio": cfg.mlp_ratio, "activation": "gelu_tanh", "norm": "layernorm",
         "pos": "learned_absolute", "weight_tying": True, "biases": True,
-        "n_params": int(n_params), "final_train_loss": round(final_train, 4),
+        "n_params": int(n_params), "final_step": int(traces["steps"][-1]),
+        "final_train_loss": round(final_train, 4),
         "final_val_loss": round(final_val, 4), "val_perplexity": round(val_ppl, 3),
+        "checkpoint_step": checkpoint_step,
+        "checkpoint_val_loss": round(checkpoint_val, 4),
+        "checkpoint_val_perplexity": round(checkpoint_ppl, 3),
         "tokenizer": "bpe_bytelevel", "eos_token_id": meta.get("eot_id", 0),
         "trained_on": "TinyStoriesV2-GPT4", "train_tokens": meta.get("train_tokens", 0),
         "seed": 1337,
@@ -66,7 +73,7 @@ def main():
     }
     json.dump(config, open(os.path.join(ART, "storybyte_config.json"), "w"), indent=2)
 
-    # Use float32 so the browser reproduces the trained model exactly.
+    # Float32 preserves the verified greedy decisions and keeps logit error small.
     # (float16 halves the file to ~2.2 MB but flips ~5% of greedy tokens; the 4.3 MB
     #  float32 file is a fine download and keeps the in-browser model bit-faithful.)
     W32 = export_weights(model, np.float32)

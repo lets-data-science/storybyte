@@ -1,5 +1,5 @@
 """
-03: Tokenize TinyStories and pack flat uint16 token streams for training.
+03 - Tokenize TinyStories and pack flat uint16 token streams for training.
 
 Each story is encoded with the trained BPE and joined by the <|endoftext|> token, then
 the whole stream is written as a memory-mappable uint16 array (nanoGPT convention).
@@ -46,6 +46,8 @@ if __name__ == "__main__":
     a = ap.parse_args()
 
     tok = Tokenizer.from_file(os.path.join(DATA, "tokenizer.json"))
+    if tok.get_vocab_size() > np.iinfo(np.uint16).max:
+        raise ValueError("uint16 packing requires a vocabulary no larger than 65,535")
     eot_id = tok.token_to_id("<|endoftext|>")
     assert eot_id is not None, "missing <|endoftext|>"
 

@@ -1,12 +1,12 @@
 """
-02: Train a byte-level BPE tokenizer on TinyStories.
+02 - Train a byte-level BPE tokenizer on TinyStories.
 
 Byte-level BPE = the GPT-2 tokenization scheme (Radford et al. 2019): start from the
 256 possible bytes, then repeatedly merge the most frequent adjacent pair. The trained
 tokenizer is the ordered list of merges + the vocabulary.
 
-We use the Hugging Face `tokenizers` (Rust) trainer for speed, then save it. The course
-re-implements this exact algorithm from scratch in Module 1.
+We use the Hugging Face `tokenizers` trainer for the exact artifact. Module 1 teaches
+the merge loop, byte mapping, and pre-tokenization contract separately.
 
 Output: data/tokenizer.json (+ vocab.json, merges.txt)
 """
@@ -23,6 +23,8 @@ if __name__ == "__main__":
     a = ap.parse_args()
 
     train_txt = os.path.join(DATA, "train.txt")
+    if not os.path.isfile(train_txt):
+        raise FileNotFoundError(f"missing {train_txt}; run the download stage first")
     print(f"training byte-level BPE (vocab={a.vocab_size}) on {train_txt} ...")
     tok = ByteLevelBPETokenizer()
     tok.train(

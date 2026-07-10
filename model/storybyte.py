@@ -138,11 +138,24 @@ class StoryByte(nn.Module):
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):
+        if idx.size(1) == 0:
+            raise ValueError("generation requires at least one input token")
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        if temperature < 0:
+            raise ValueError("temperature must be non-negative; use 0 for greedy decoding")
+        if top_k is not None and top_k < 0:
+            raise ValueError("top_k must be non-negative or None")
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size:]
             logits, _ = self(idx_cond)
-            logits = logits[:, -1, :] / max(temperature, 1e-8)
-            if top_k is not None:
+            logits = logits[:, -1, :]
+            if temperature == 0:
+                idx_next = torch.argmax(logits, dim=-1, keepdim=True)
+                idx = torch.cat((idx, idx_next), dim=1)
+                continue
+            logits = logits / temperature
+            if top_k:
                 v, _ = torch.topk(logits, min(top_k, logits.size(-1)))
                 logits[logits < v[:, [-1]]] = -float("inf")
             probs = F.softmax(logits, dim=-1)

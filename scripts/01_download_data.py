@@ -1,5 +1,5 @@
 """
-01: Download the TinyStories V2 dataset.
+01 - Download the TinyStories V2 GPT-4 dataset.
 
 TinyStories: Eldan & Li, Microsoft Research, 2023 (arXiv:2305.07759).
 Dataset: https://huggingface.co/datasets/roneneldan/TinyStories
@@ -8,7 +8,7 @@ Full reproducible default = download the complete train + valid txt files.
 For a fast local run, pass --subset_mb N to grab only the first N MB of the
 (huge) train file via an HTTP range request (sufficient to train a ~1M-param model).
 """
-import argparse, os, sys, urllib.request
+import argparse, os, urllib.request
 
 BASE = "https://huggingface.co/datasets/roneneldan/TinyStories/resolve/main"
 TRAIN = "TinyStoriesV2-GPT4-train.txt"
@@ -24,23 +24,36 @@ def download(fname, dest, max_bytes=None):
         headers["Range"] = f"bytes=0-{max_bytes - 1}"
     print(f"  GET {url}" + (f"  (first {max_bytes/1e6:.0f} MB)" if max_bytes else ""))
     req = urllib.request.Request(url, headers=headers)
-    with urllib.request.urlopen(req) as r, open(dest, "wb") as f:
-        got = 0
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk); got += len(chunk)
-            print(f"\r    {got/1e6:.0f} MB", end="", flush=True)
-    print()
-    # if we range-truncated mid-story, trim back to the last blank line for clean stories
-    if max_bytes:
-        with open(dest, "rb") as f:
-            data = f.read()
-        cut = data.rfind(b"\n\n")
-        if cut > 0:
-            with open(dest, "wb") as f:
+    partial = f"{dest}.part"
+    try:
+        with urllib.request.urlopen(req) as r, open(partial, "wb") as f:
+            got = 0
+            while max_bytes is None or got < max_bytes:
+                read_size = 1 << 20
+                if max_bytes is not None:
+                    read_size = min(read_size, max_bytes - got)
+                chunk = r.read(read_size)
+                if not chunk:
+                    break
+                f.write(chunk); got += len(chunk)
+                print(f"\r    {got/1e6:.0f} MB", end="", flush=True)
+        if got == 0:
+            raise RuntimeError(f"download returned no data for {fname}")
+        if max_bytes is not None and got < max_bytes:
+            raise RuntimeError(f"subset download ended at {got} bytes; expected {max_bytes}")
+        if max_bytes is not None:
+            with open(partial, "rb") as f:
+                data = f.read()
+            cut = data.rfind(b"\n\n")
+            if cut <= 0:
+                raise RuntimeError("subset contained no complete blank-line-delimited story")
+            with open(partial, "wb") as f:
                 f.write(data[:cut])
+        os.replace(partial, dest)
+    finally:
+        if os.path.exists(partial):
+            os.remove(partial)
+    print()
     return os.path.getsize(dest)
 
 

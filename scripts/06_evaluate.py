@@ -1,5 +1,5 @@
 """
-06: Evaluate StoryByte and produce the course display artifacts:
+06 - Evaluate StoryByte and produce the course's display artifacts:
   course_artifacts/sample_generations.json  (fixed prompts x decoding settings)
   course_artifacts/interp_data.json         (logit-lens + attention patterns for Module 7)
 
@@ -9,7 +9,7 @@ Generations use the pure-NumPy reference so they match what the browser runs.
 import json, os, sys
 import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from reference_forward import StoryByteNumPy, layernorm, softmax
+from reference_forward import StoryByteNumPy, gelu, layernorm, softmax
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ART = os.path.join(HERE, "course_artifacts")
@@ -32,8 +32,6 @@ def instrumented_forward(m, ids):
         attn_patterns.append(att)
         y = (att @ v).transpose(1, 0, 2).reshape(T, m.n_embd)
         x = x + (y @ m.W[f"h.{i}.attn.c_proj.w"] + m.W[f"h.{i}.attn.c_proj.b"])
-        hmid = np.maximum  # Keeps the local namespace stable for inspection.
-        from reference_forward import gelu
         hh = gelu(layernorm(x, m.W[f"h.{i}.ln_2.g"], m.W[f"h.{i}.ln_2.b"]) @ m.W[f"h.{i}.mlp.c_fc.w"] + m.W[f"h.{i}.mlp.c_fc.b"])
         x = x + (hh @ m.W[f"h.{i}.mlp.c_proj.w"] + m.W[f"h.{i}.mlp.c_proj.b"])
         per_layer_resid.append(x.copy())
@@ -53,12 +51,14 @@ def logit_lens(m, ids, resids):
 
 def main():
     m = StoryByteNumPy(ART)
+    if m.tok is None:
+        raise RuntimeError("evaluation requires the pinned 'tokenizers' package")
     # sample generations
     samples = {}
     for pr in PROMPTS:
         ids = m.tok.encode(pr).ids
         samples[pr] = {
-            "greedy": m.tok.decode(m.generate(ids, 80, temperature=1e-6, top_k=1)),
+            "greedy": m.tok.decode(m.generate(ids, 80, temperature=0, top_k=0)),
             "temp_0.8_topk_40": m.tok.decode(m.generate(ids, 80, temperature=0.8, top_k=40, seed=1)),
             "temp_1.0": m.tok.decode(m.generate(ids, 80, temperature=1.0, top_k=0, seed=2)),
             "temp_1.4": m.tok.decode(m.generate(ids, 80, temperature=1.4, top_k=0, seed=3)),

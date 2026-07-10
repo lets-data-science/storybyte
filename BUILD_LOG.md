@@ -1,195 +1,228 @@
-# StoryByte Build Log
+# StoryByte build log
 
-This log records how StoryByte was built for the course
-["Build a Tiny LLM: From Tokens to Text"](https://letsdatascience.com/learn/build-a-tiny-llm).
-It keeps the training choices, measurements, and caveats in one place so the course
-can cite real numbers instead of invented examples.
+This is the measured record for the StoryByte model used by the Build a Tiny
+LLM course. It separates recorded values, derived arithmetic, and engineering
+estimates so the course can label them correctly.
 
-## 0. What StoryByte is
+## 1. Goal
 
-- A GPT-2-style decoder-only language model with about 1.09M parameters.
-- Trained from scratch on TinyStories.
-- Designed to write short children's stories, not to act as a general-purpose chatbot.
-- Built so the forward pass can run live in the browser with NumPy/Pyodide.
+StoryByte is a small decoder-only model for short children's stories. Its scope
+was chosen before its architecture:
 
-The browser course does not train the model. Training happens offline in this repo,
-then the course loads the exported weights and runs inference.
+- narrow enough to learn on one local machine
+- small enough to ship float32 weights to a browser
+- conventional enough that a beginner can rebuild each operation
+- real enough that the browser runs trained weights rather than a scripted demo
 
-## 1. Reference environment
+It is not a general assistant and should not be evaluated as one.
 
-| Item | Value |
+## 2. Reference environment
+
+| Item | Recorded value |
 |---|---|
 | OS | macOS 26.4.1 |
-| Arch | arm64, Apple Silicon |
-| Python | 3.11.6, pyenv |
+| Architecture | arm64 Apple Silicon |
+| Python | 3.11.6 |
 | PyTorch | 2.11.0 |
-| Accelerator | Apple MPS, `torch.backends.mps.is_available() == True` |
 | NumPy | 1.26.4 |
 | tokenizers | 0.22.2 |
 | huggingface_hub | 1.20.1 |
+| Accelerator | Apple MPS |
 | CPU cores | 12 |
-| Free disk | about 290 GB |
 
-A modern Apple Silicon Mac is enough for this run. CPU-only training also works, but
-is slower. See `HARDWARE.md` for the shorter hardware notes.
+The run did not use CUDA. CUDA support in the current trainer is a separate code
+path and has no runtime claim in this log.
 
-## 2. Browser feasibility spike
+## 3. Browser feasibility spike
 
-Before training, we tested whether a tiny GPT forward pass could run fast enough in a
-browser worker. The spike used a pure NumPy implementation and timed token generation.
+Before training, a NumPy generator was timed to choose a practical architecture.
+The Pyodide column used a 6x planning multiplier; it was an estimate, not a
+browser benchmark.
 
-| Implementation | native ms/token | est. Pyodide | 50-token story |
+| Implementation | Native ms/token | Estimated Pyodide ms/token | Estimated 50-token time |
 |---|---:|---:|---:|
-| Naive context recompute, looped heads | 59 | ~355 | ~18 s |
-| KV cache with vectorized heads | 24 | ~144 | ~7 s |
-| KV cache, vectorized heads, preallocated cache | 12 | ~74 | ~3.7 s |
+| Recompute context, loop over heads | 59 | 355 | 18 s |
+| KV cache, vectorized heads, concatenated cache | 24 | 144 | 7 s |
+| KV cache, vectorized heads, preallocated cache | 12 | 74 | 3.7 s |
 
-Two design decisions came from this:
+In the tested small configurations, Python/NumPy operation overhead made layer
+count especially visible. That result supported a four-layer design. It does
+not imply that width is free or that layer count always dominates on other
+runtimes.
 
-1. Browser generation is dominated by small-operation overhead and scales mainly with
-   layer count, not parameter count. A shallow 4-layer model is the right target.
-2. The course runtime needs a preallocated KV cache, vectorized heads, a Web Worker, and
-   streaming tokens.
+## 4. Architecture decision
 
-Target architecture: `n_layer=4`, `n_head=4`, `n_embd=128`, `block_size=256`,
-`vocab_size` about 2048.
+The model follows a classic GPT-2-style decoder block:
 
-## 3. Model spec
+- 4 pre-LayerNorm transformer blocks
+- 4 causal attention heads per block
+- model width 128 and head width 32
+- learned absolute positions for a 256-token context
+- GELU MLP with hidden width 512
+- byte-level BPE vocabulary of 2,048
+- tied token embedding and language-model head
+- biases in linear layers and LayerNorm
 
-StoryByte uses the classic GPT-2/nanoGPT block so the course can rebuild the same model
-from scratch.
+Modern alternatives such as RoPE, RMSNorm, SwiGLU, GQA, and MoE are outside this
+model. The course can discuss them, but its executable path must match the
+architecture above.
 
-| Component | Choice | Reason |
-|---|---|---|
-| Type | Decoder-only causal LM | GPT-family next-token prediction |
-| Positions | Learned absolute embeddings | Simple to code and verify |
-| Norm | Pre-LayerNorm with weight and bias | Stable classic transformer block |
-| Attention | Standard multi-head scaled-dot-product | Canonical attention mechanism |
-| MLP | Linear, GELU(tanh), Linear, 4x width | GPT-2 style FFN |
-| LM head | Tied to token embedding | Common for small language models |
-| Attention implementation | Explicit PyTorch ops | Matches the NumPy reference closely |
+### Parameter budget
 
-The implementation mirrors Karpathy's nanoGPT style.
+| Group | Parameters |
+|---|---:|
+| Tied token embedding and LM head | 262,144 |
+| Position embedding | 32,768 |
+| Attention across 4 blocks | 264,192 |
+| MLP across 4 blocks | 526,848 |
+| Block LayerNorms | 2,048 |
+| Final LayerNorm | 256 |
+| Total | 1,088,256 |
 
-## 4. Data
+The MLP is 48.41% of the whole model. Within the four transformer blocks alone,
+it is about 66.4%. Those two denominators must not be mixed.
 
-- Dataset: TinyStories V2 from `roneneldan/TinyStories` on Hugging Face.
-- Files: `TinyStoriesV2-GPT4-train.txt` and `TinyStoriesV2-GPT4-valid.txt`.
-- Reason: TinyStories restricts the language world to simple stories, which lets a
-  small model learn coherent English.
-- Reference run: first 419 MB of the train file plus the full validation file.
+## 5. Data
 
-Command:
+The source files came from `roneneldan/TinyStories`:
+
+- `TinyStoriesV2-GPT4-train.txt`
+- `TinyStoriesV2-GPT4-valid.txt`
+
+Reference command:
 
 ```bash
 python scripts/01_download_data.py --subset_mb 400
 ```
 
-## 5. Tokenizer
+The argument requests the first 400 MiB of the training file and trims back to
+the last blank-line story boundary. The resulting file is displayed as about
+419 MB when decimal units are used. The complete validation file was retained.
 
-- Byte-level BPE, vocab size 2,048.
-- Trained with Hugging Face `tokenizers`.
-- Special token: `<|endoftext|>`, id 0.
-- The phrase `"Once upon a time, there was a little"` encodes to 9 tokens in the
-  reference tokenizer. Several tokens include the GPT-2 byte-level leading-space
-  marker.
+| Data quantity | Measured value |
+|---|---:|
+| Training stories | 147,464 |
+| Validation stories | 7,948 |
+| Training tokens | 113,524,462 |
+| Validation tokens | 6,086,687 |
+| Packed dtype | uint16 |
 
-The course reimplements the same BPE idea from scratch in Module 1.
+The current pipeline also supports the complete training file. A full-data run
+is a different experiment and will not reproduce these counts.
 
-## 6. Tokenized dataset
+## 6. Tokenizer
 
-| Split | Tokens | Stories |
-|---|---:|---:|
-| train | 113,524,462 | 147,464 |
-| val | 6,086,687 | 7,948 |
+The tokenizer is GPT-2-style byte-level BPE with one special token:
+`<|endoftext|>` at ID 0.
 
-Streams are stored as flat `uint16` arrays, following the nanoGPT convention.
+| Quantity | Measured value |
+|---|---:|
+| Vocabulary | 2,048 |
+| Ordered merges | 1,791 |
 
-The reference run uses about 100 training tokens per parameter. That is intentionally
-heavy for a small model: the goal is a model that behaves well in the browser, not a
-compute-optimal training run.
-
-## 7. Training
-
-| Item | Value |
-|---|---|
-| Model | StoryByte, 1.088M params |
-| Shape | L4 / H4 / d128 / ctx256 / vocab2048 |
-| Optimizer | AdamW, beta=(0.9, 0.95), weight decay 0.1 |
-| LR schedule | 6e-4 to 6e-5, 1k warmup, cosine decay |
-| Batch | 64 |
-| Steps | 30,000 |
-| Grad clip | 1.0 |
-| Seed | 1337 |
-| Device | Apple MPS |
-| Speed | about 12 steps/sec |
-
-Validation loss trajectory:
+The sanity string `Once upon a time, there was a little` encodes to nine tokens.
+In the tokenizer JSON, a leading-space byte is displayed with the Unicode
+U+0120 marker. Written with ASCII escapes, the pieces are:
 
 ```text
-step 0      7.65
-step 500    4.09
-step 1000   3.09
-step 2000   2.34
-step 5000   1.99
-step 9500   1.90
-step 15000  1.81
-step 29500  1.74
+['Once', '\u0120upon', '\u0120a', '\u0120time', ',',
+ '\u0120there', '\u0120was', '\u0120a', '\u0120little']
 ```
 
-Final result:
+The exact encoder uses the byte-level pre-tokenizer as well as the ordered merge
+table. Decoding reverses the byte mapping; it is not plain token-string joining.
 
-| Metric | Value |
+## 7. Training recipe
+
+| Setting | Recorded value |
+|---|---|
+| Objective | next-token cross-entropy |
+| Optimizer | AdamW |
+| Betas | 0.9, 0.95 |
+| Weight decay | 0.1 |
+| Peak learning rate | 6e-4 |
+| Minimum learning rate | 6e-5 |
+| Warmup | first 1,000 updates |
+| Decay | cosine |
+| Gradient clipping | global norm 1.0 |
+| Batch | 64 x 256 tokens |
+| Updates | 30,000 |
+| Seed | 1337 |
+
+The run sampled `64 x 256 x 30,000 = 491,520,000` training token positions.
+That is about 4.33 equivalents of the 113,524,462-token stream because random
+windows are sampled with replacement. It is about 451.7 sampled positions per
+parameter. Dataset size and sampled training positions are different quantities.
+
+The learning-rate schedule begins at 6e-7 for update index 0, reaches 6e-4 at
+index 999, remains at 6e-4 when cosine decay begins at index 1,000, and reaches
+6e-5 at index 30,000.
+
+## 8. Training result
+
+The MPS run completed in 42.4 minutes, averaging roughly 12 updates per second.
+The trace contains an evaluation every 500 updates.
+
+| Trace point | Step | Train loss | Validation loss | Validation perplexity |
+|---|---:|---:|---:|---:|
+| Initial | 0 | 7.654752 | 7.654894 | 2110.952 |
+| Selected checkpoint | 29,500 | 1.730089 | 1.731835 | 5.651016 |
+| Final evaluation | 30,000 | 1.720557 | 1.739808 | 5.696251 |
+
+The selected checkpoint is the validation minimum at step 29,500. The final
+training evaluation at step 30,000 has a slightly lower sampled train loss and
+a slightly higher validation loss. The exported weights come from step 29,500.
+
+## 9. Export contract
+
+The exporter writes 52 arrays to `storybyte_weights.npz`. Every array is
+float32. Linear weights are stored as `(input, output)` so NumPy uses
+`x @ W + b`. The tied output head uses `x @ wte.T`.
+
+An earlier float16 experiment reduced the file size but changed about 5% of
+greedy decisions in its verification run. The shipped float32 arrays contain
+4,353,024 parameter bytes before NPZ container overhead.
+
+The artifact config stores both final-trace metrics and selected-checkpoint
+metrics. Downstream code should use the label that matches its claim.
+
+## 10. PyTorch and NumPy comparison
+
+`scripts/05_export_artifacts.py` compares the exported NumPy implementation with
+the selected PyTorch checkpoint on a fixed sequence of token IDs 5 through 24.
+
+| Check | Measured value |
 |---|---:|
-| Training time | 42.4 minutes |
-| Final train loss | 1.7206 |
-| Final val loss | 1.7398 |
-| Best val loss | 1.7318 |
-| Val perplexity | 5.70 |
-
-Coherent short stories appeared around step 4,000 and improved through the run.
-
-## 8. Export and verification
-
-The export script writes 52 weight arrays to `course_artifacts/storybyte_weights.npz`.
-Linear weights are stored as `(in, out)` so the browser can use plain `x @ W + b`.
-
-The first export tried float16. It cut the file size to about 2.2 MB, but it flipped
-about 5% of greedy tokens compared with PyTorch. The shipped export is float32
-instead. It is 4.37 MB and reproduces the checkpoint reliably.
-
-Verification:
-
-| Check | Value |
-|---|---:|
-| NumPy vs PyTorch max logit diff | 1.7e-05 |
+| Maximum absolute logit difference | 1.71661376953125e-05 |
 | Greedy-token agreement | 100.0% |
+| Export dtype | float32 |
 
-That parity check is what lets the browser course claim it is running the trained
-model, not a lookalike.
+This establishes close numerical agreement on the fixed verification sequence.
+It is not a bitwise-identity claim for every possible input.
 
-## 9. Sample behavior
+## 11. Interpretation artifacts
 
-Greedy decoding from the shipped weights produces grammatical short stories from
-prompts such as `"Once upon a time"` and `"One day, a little girl named Lily"`.
-Full samples live in `course_artifacts/sample_generations.json`.
+`interp_data.json` contains two prompts. Each has measured attention matrices
+for 4 layers x 4 heads and logit-lens outputs for four residual stages.
 
-## 10. Produced artifacts
+These arrays support inspection, not causal role labels. A head that attends to
+a previous token on two prompts has not thereby been proven to be a universal
+previous-token head. The course must label role names as hypotheses unless an
+intervention tests them.
 
-- `course_artifacts/storybyte_config.json`
-- `course_artifacts/storybyte_weights.npz`
-- `course_artifacts/reference_forward.py`
-- `course_artifacts/storybyte_tokenizer.json`
-- `course_artifacts/storybyte_tokenizer_hf.json`
-- `course_artifacts/train_traces.json`
-- `course_artifacts/interp_data.json`
-- `course_artifacts/sample_generations.json`
-- `course_artifacts/verification.json`
-- `course_artifacts/MANIFEST.md`
+## 12. July 2026 audit corrections
 
-## 11. Learner takeaway
+The course audit made four documentation and tooling corrections without
+changing the trained weights:
 
-A 1M-parameter model can write coherent small-domain text when the data distribution is
-narrow. StoryByte is not a general-purpose chatbot. It is a compact teaching model for
-understanding the tokenizer, transformer block, sampler, training curve, and inference
-runtime end to end.
+1. The trainer now selects CUDA before MPS and CPU, matching the hardware guide.
+2. `make all` now uses the recorded 400 MiB subset instead of silently choosing
+   the complete training file.
+3. The artifact config now separates the selected step-29,500 checkpoint from
+   the final step-30,000 trace.
+4. The data-reuse arithmetic now uses 491,520,000 sampled positions and 4.33
+   dataset equivalents instead of treating unique dataset tokens as all tokens
+   processed during optimization.
+
+Run `make verify` after any source or artifact change. It checks the current
+arrays, tokenizer, metrics, source-copy parity, and a fresh NumPy forward pass.

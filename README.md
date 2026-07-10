@@ -1,48 +1,57 @@
 # StoryByte
 
-StoryByte is a small GPT-style language model trained from scratch on
-[TinyStories](https://arxiv.org/abs/2305.07759). It has about 1.09 million
-parameters and writes short children's stories.
+StoryByte is a 1,088,256-parameter decoder-only language model trained from
+scratch on a 400 MiB subset of
+[TinyStories V2](https://arxiv.org/abs/2305.07759). It writes short children's
+stories. The model, tokenizer, training loop, exported weights, and NumPy
+forward pass are included here.
 
-This repo is the offline build system for the Let's Data Science course
-["Build a Tiny LLM: From Tokens to Text"](https://letsdatascience.com/learn/build-a-tiny-llm).
-The browser course rebuilds the forward pass in NumPy and runs the trained model
-live. This repository contains the training code, export scripts, and the artifact
-contract the course loads.
+This repository is the offline training half of the interactive
+[Build a Tiny LLM](https://letsdatascience.com/learn/build-a-tiny-llm) course.
+The course loads the exported float32 weights and runs the same forward-pass
+math in the browser. Training remains an offline PyTorch job.
 
-StoryByte is intentionally narrow. It does not answer general questions, do math,
-or behave like a chatbot. That is the point: a tiny model can produce readable
-language when the world is restricted enough, and that makes every part of the LLM
-stack easier to inspect.
+StoryByte has a narrow job. It does not provide reliable facts, arithmetic, or
+assistant behavior. That limited scope is useful for teaching because every
+part of the model remains small enough to inspect.
 
-## Repository layout
+## Repository map
 
 ```text
 storybyte/
-  model/storybyte.py            PyTorch GPT model
-  scripts/
-    01_download_data.py         Download TinyStories
-    02_train_tokenizer.py       Train byte-level BPE tokenizer
-    03_prepare_data.py          Tokenize and pack uint16 streams
-    04_train.py                 Train with AdamW and cosine LR
-    05_export_artifacts.py      Export and verify course artifacts
-    06_evaluate.py              Generate samples and interpretability data
-    reference_forward.py        Pure NumPy forward pass and generation
-  course_artifacts/             Files consumed by the browser course
-  checkpoints/                  Trained checkpoint and training traces
-  BUILD_LOG.md                  Build notes and canonical measurements
-  HARDWARE.md                   Training hardware notes
-  REPRODUCIBILITY.md            Seeds, versions, and expected results
+|-- model/storybyte.py           # PyTorch model
+|-- scripts/
+|   |-- 01_download_data.py      # TinyStories download
+|   |-- 02_train_tokenizer.py    # byte-level BPE training
+|   |-- 03_prepare_data.py       # uint16 token streams
+|   |-- 04_train.py              # AdamW training loop
+|   |-- 05_export_artifacts.py   # float32 export and PyTorch/NumPy check
+|   |-- 06_evaluate.py           # samples and interpretation artifacts
+|   |-- 07_verify_repository.py  # fast offline integrity check
+|   `-- reference_forward.py     # NumPy forward pass and generation
+|-- course_artifacts/            # files consumed by the browser course
+|-- checkpoints/                 # selected PyTorch checkpoint and trace
+|-- BUILD_LOG.md                 # measured reference-run record
+|-- HARDWARE.md                  # supported execution paths
+`-- REPRODUCIBILITY.md           # seeds, versions, and expected values
 ```
 
-## Quickstart
+## Reproduce the shipped run
+
+Use Python 3.11 and install the pinned packages:
 
 ```bash
-pip install -r requirements.txt
+python3 -m pip install -r requirements.txt
 make all
 ```
 
-Step by step:
+`make all` reproduces the recorded data choice: the first 400 MiB of the V2
+training file, trimmed back to the last complete story. It then trains the
+tokenizer and model, exports the selected checkpoint, and rebuilds the course
+artifacts. The training run used Apple MPS and took 42.4 minutes on the machine
+recorded in `BUILD_LOG.md`.
+
+Run the stages separately when debugging:
 
 ```bash
 python scripts/01_download_data.py --subset_mb 400
@@ -53,74 +62,96 @@ python scripts/05_export_artifacts.py
 python scripts/06_evaluate.py
 ```
 
-Run the exported model with NumPy only:
+`make download-full` downloads the complete training file. That creates a
+different data run and will not reproduce the checked-in token counts.
+
+## Verify the checked-in artifacts
+
+The fast verifier does not retrain the model:
 
 ```bash
-python scripts/reference_forward.py "Once upon a time"
+make verify
 ```
 
-## Model
+It checks the 52 exported arrays, shapes, float32 dtype, 1,088,256-parameter
+total, tokenizer size, final trace, selected checkpoint, recorded
+PyTorch/NumPy comparison, and a fresh NumPy forward pass.
 
-StoryByte uses the classic GPT-2/nanoGPT decoder block because the course rebuilds
-that architecture directly:
+Generate text from the exported model without importing PyTorch:
+
+```bash
+python scripts/reference_forward.py "Once upon a time" --seed 0
+```
+
+The text path uses the pinned `tokenizers` package for exact byte-level BPE.
+The model math itself uses NumPy.
+
+## Model specification
+
+StoryByte uses a classic GPT-2-style block so the course can rebuild the same
+operations directly:
 
 - decoder-only causal self-attention
-- learned absolute positional embeddings
-- pre-LayerNorm transformer blocks
-- standard multi-head scaled-dot-product attention
-- GELU MLP with 4x hidden width
-- weight-tied language-model head
+- 4 blocks, 4 heads, width 128, head width 32
+- 256-token context and 2,048-token byte-level BPE vocabulary
+- learned absolute position embeddings
+- pre-LayerNorm residual blocks
+- GELU MLP with hidden width 512
+- tied token embedding and language-model head
 
-| Config | Value |
-|---|---|
-| Layers / heads / d_model | 4 / 4 / 128 |
-| Context | 256 tokens |
-| Vocab | 2,048 byte-level BPE tokens |
-| Parameters | 1,088,256 |
-| Training data | TinyStories V2, 113.5M tokens in the reference run |
-| Recipe | AdamW, beta=(0.9, 0.95), wd 0.1, lr 6e-4 to 6e-5, 1k warmup, cosine decay, grad clip 1.0 |
-
-## Results
-
-The reference run trained for 30,000 steps in about 42 minutes on Apple MPS.
-
-| Metric | Value |
+| Item | Recorded value |
 |---|---:|
-| Final train loss | 1.7206 |
-| Final val loss | 1.7398 |
-| Val perplexity | 5.70 |
-| NumPy vs PyTorch max logit diff | 1.7e-05 |
-| Greedy-token agreement | 100.0% |
+| Parameters | 1,088,256 |
+| Training stories | 147,464 |
+| Training tokens | 113,524,462 |
+| Updates | 30,000 |
+| Final trace train loss | 1.7206 |
+| Final trace validation loss | 1.7398 |
+| Final trace validation perplexity | 5.696 |
+| Selected checkpoint | step 29,500 |
+| Selected checkpoint validation loss | 1.7318 |
+| Selected checkpoint validation perplexity | 5.651 |
 
-The shipped NumPy reference in `scripts/reference_forward.py` reproduces the PyTorch
-checkpoint within float32 tolerance. See `course_artifacts/verification.json` for the
-exact verification record.
+The browser weights come from the selected step-29,500 checkpoint. The final
+trace values describe the last evaluation at step 30,000. These are deliberately
+reported separately.
 
-## Course artifacts
+The float32 NumPy export was compared with the PyTorch checkpoint on a fixed
+20-token verification sequence. Maximum absolute logit difference was
+`1.71661376953125e-05`, and greedy-token agreement was 100% for that sequence.
+Those numbers are stored in `course_artifacts/verification.json`.
 
-The browser course loads files from `course_artifacts/`.
+## Course artifact contract
 
 | File | Purpose |
 |---|---|
-| `storybyte_config.json` | architecture and final metrics |
-| `storybyte_weights.npz` | all model weights as named float32 arrays |
-| `reference_forward.py` | verified pure-NumPy forward pass |
-| `storybyte_tokenizer.json` | simplified byte-level BPE view |
-| `storybyte_tokenizer_hf.json` | authoritative Hugging Face tokenizer JSON |
-| `train_traces.json` | loss, LR, and perplexity curves |
-| `interp_data.json` | logit-lens and attention-pattern data |
-| `sample_generations.json` | recorded generation examples |
-| `verification.json` | NumPy/PyTorch parity proof |
-| `MANIFEST.md` | artifact schema and canonical numbers |
+| `storybyte_config.json` | architecture, trace metrics, and checkpoint metrics |
+| `storybyte_weights.npz` | 52 named float32 weight arrays |
+| `storybyte_tokenizer.json` | simplified vocabulary and ordered merges |
+| `storybyte_tokenizer_hf.json` | authoritative exact tokenizer |
+| `reference_forward.py` | checked NumPy forward pass and generation |
+| `train_traces.json` | loss, learning-rate, and perplexity trace |
+| `interp_data.json` | measured attention and logit-lens data for two prompts |
+| `sample_generations.json` | fixed-seed reference generations |
+| `verification.json` | recorded PyTorch/NumPy comparison |
+| `MANIFEST.md` | array names, shapes, and conventions |
+
+The website's four runtime artifacts match these files by SHA-256 in the local
+course audit. Re-run the website validator whenever an artifact changes:
+
+```bash
+python3 scripts/tests/validate-storybyte-artifacts.py
+```
+
+That command lives in the `lets-data-science` website repository.
 
 ## Sources
 
-- TinyStories: Eldan and Li, 2023, [arXiv:2305.07759](https://arxiv.org/abs/2305.07759)
-- nanoGPT: Andrej Karpathy, [github.com/karpathy/nanoGPT](https://github.com/karpathy/nanoGPT)
-- GPT-2: Radford et al., 2019
-- Attention Is All You Need: Vaswani et al., 2017, [arXiv:1706.03762](https://arxiv.org/abs/1706.03762)
-- AdamW: Loshchilov and Hutter, 2017, [arXiv:1711.05101](https://arxiv.org/abs/1711.05101)
-- BPE: Sennrich et al., 2016, [arXiv:1508.07909](https://arxiv.org/abs/1508.07909)
-- picoGPT: Jay Mody, pure-NumPy GPT reference style
+- [TinyStories](https://arxiv.org/abs/2305.07759), Eldan and Li, 2023
+- [Attention Is All You Need](https://arxiv.org/abs/1706.03762), Vaswani et al., 2017
+- [AdamW](https://arxiv.org/abs/1711.05101), Loshchilov and Hutter, 2017
+- [Neural Machine Translation of Rare Words with Subword Units](https://arxiv.org/abs/1508.07909), Sennrich et al., 2016
+- [nanoGPT](https://github.com/karpathy/nanoGPT), Andrej Karpathy
+- [picoGPT](https://github.com/jaymody/picoGPT), Jay Mody
 
-MIT licensed. Built by [Let's Data Science](https://letsdatascience.com).
+MIT licensed. Maintained by [Let's Data Science](https://letsdatascience.com).

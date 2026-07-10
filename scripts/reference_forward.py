@@ -1,5 +1,5 @@
 """
-reference_forward.py: StoryByte forward pass and generation in pure NumPy.
+StoryByte's forward pass and generation in NumPy.
 
 This is the canonical, dependency-light (numpy-only for the math) re-implementation that
 the in-browser course mirrors line-for-line. It loads the exported weights and reproduces
@@ -13,7 +13,9 @@ Weight/matmul convention (documented in MANIFEST.md):
 
 Picogpt lineage: Jay Mody, "GPT in 60 Lines of NumPy" (github.com/jaymody/picoGPT).
 """
-import json, os, sys
+import argparse
+import json
+import os
 import numpy as np
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -43,17 +45,18 @@ class StoryByteNumPy:
     def __init__(self, artifacts_dir):
         self.cfg = json.load(open(os.path.join(artifacts_dir, "storybyte_config.json")))
         w = np.load(os.path.join(artifacts_dir, "storybyte_weights.npz"))
-        self.W = {k: w[k].astype(np.float32) for k in w.files}   # upcast f16 -> f32 for compute
+        self.W = {k: w[k].astype(np.float32) for k in w.files}
         self.n_layer = self.cfg["n_layer"]; self.n_head = self.cfg["n_head"]; self.n_embd = self.cfg["n_embd"]
         # tokenizer (used for encode/decode only; the math above is pure numpy)
         self.tok = None
+        self.tokenizer_error = None
         tjson = os.path.join(artifacts_dir, "storybyte_tokenizer_hf.json")
         if os.path.exists(tjson):
             try:
                 from tokenizers import Tokenizer
                 self.tok = Tokenizer.from_file(tjson)
-            except Exception:
-                pass
+            except Exception as exc:
+                self.tokenizer_error = exc
 
     def attn(self, x, i):
         T = x.shape[0]; H = self.n_head; hd = self.n_embd // H
@@ -81,11 +84,27 @@ class StoryByteNumPy:
         return x @ self.W["wte"].T                    # (T, vocab) logits
 
     def generate(self, ids, max_new_tokens=80, temperature=0.8, top_k=40, top_p=None, seed=0):
+        if not ids:
+            raise ValueError("generation requires at least one input token")
+        if max_new_tokens < 0:
+            raise ValueError("max_new_tokens must be non-negative")
+        if temperature < 0:
+            raise ValueError("temperature must be non-negative; use 0 for greedy decoding")
+        if top_k is not None and top_k < 0:
+            raise ValueError("top_k must be non-negative or None")
+        if top_p is not None and not 0 < top_p <= 1:
+            raise ValueError("top_p must be in (0, 1]")
         rng = np.random.default_rng(seed)
         ids = list(ids); block = self.cfg["block_size"]
         for _ in range(max_new_tokens):
             logits = self.forward(ids[-block:])[-1]
-            logits = logits / max(temperature, 1e-8)
+            if temperature <= 0:
+                nid = int(np.argmax(logits))
+                ids.append(nid)
+                if nid == self.cfg.get("eos_token_id", -1):
+                    break
+                continue
+            logits = logits / temperature
             if top_k:
                 kth = np.sort(logits)[-min(top_k, len(logits))]
                 logits = np.where(logits < kth, -np.inf, logits)
@@ -96,19 +115,41 @@ class StoryByteNumPy:
                 mask = np.zeros_like(p); mask[keep] = p[keep]; p = mask / mask.sum()
             nid = int(rng.choice(len(p), p=p))
             ids.append(nid)
-            if self.tok is not None and nid == self.cfg.get("eos_token_id", -1):
+            if nid == self.cfg.get("eos_token_id", -1):
                 break
         return ids
 
     def generate_text(self, prompt, **kw):
-        assert self.tok is not None, "tokenizer not loaded"
+        if self.tok is None:
+            detail = f" ({self.tokenizer_error})" if self.tokenizer_error else ""
+            raise RuntimeError(
+                "Exact text encoding requires the 'tokenizers' package. "
+                "Run 'pip install -r requirements.txt' first." + detail
+            )
         ids = self.tok.encode(prompt).ids
         out = self.generate(ids, **kw)
         return self.tok.decode(out)
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate text with the exported StoryByte model.")
+    parser.add_argument("prompt", nargs="?", default="Once upon a time")
+    parser.add_argument("--max-new-tokens", type=int, default=80)
+    parser.add_argument("--temperature", type=float, default=0.8)
+    parser.add_argument("--top-k", type=int, default=40)
+    parser.add_argument("--top-p", type=float, default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
     art = os.path.join(HERE, "course_artifacts")
     m = StoryByteNumPy(art)
-    prompt = sys.argv[1] if len(sys.argv) > 1 else "Once upon a time"
-    print(m.generate_text(prompt, max_new_tokens=80, temperature=0.8, top_k=40))
+    try:
+        print(m.generate_text(
+            args.prompt,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+            top_k=args.top_k,
+            top_p=args.top_p,
+            seed=args.seed,
+        ))
+    except (RuntimeError, ValueError) as exc:
+        parser.exit(2, f"error: {exc}\n")
